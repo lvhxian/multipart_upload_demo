@@ -7,7 +7,7 @@
         <!-- 协议选择器 -->
         <div class="protocol-btns">
             <button :class="{cur: protocolCur == 'http' }" @click="selectProtocol('http')">HTTP</button>
-            <button :class="{cur: protocolCur == 'websocket' }" @click="selectProtocol('websocket')">WebSocket</button>
+            <button :class="{cur: protocolCur == 'socket' }" @click="selectProtocol('socket')">WebSocket</button>
         </div>
         <!-- 上传盒子 -->
         <div class="file-upload-box" @click="choiceFile" @drop.prevent="dragFile" @dragover.prevent>
@@ -61,22 +61,25 @@
 <script>
 import axios from 'axios';
 import SparkMD5 from 'spark-md5';
+import io from 'socket.io-client';
 
 const zipReg = new RegExp(/^.*(?<=(zip|rar|tar))$/);
 const imageReg = new RegExp(/^.*(?<=(jpg|jpeg|png))$/);
 const videoReg = new RegExp(/^.*(?<=(mp4|avi|rmvb|flv))$/);
 
+const baseURL = 'http://127.0.0.1:8888';
 const KB = 1024;
 const MB = 1024 * KB;
 const GB = 1024 * MB;
 const BlobFileSlice = File.prototype.slice || File.prototype.mozSlice || File.prototype.webkitSlice; // 存放分片数据
 
-axios.defaults.baseURL = 'http://127.0.0.1:8888';
+axios.defaults.baseURL = baseURL;
 
 export default {
     data() {
         return {
-            protocolCur: 'http',        // 上传协议
+            socket: null,
+            protocolCur: 'socket',        // 上传协议
             showFileInfo: false,        // 是否显示上传文件信息
             isUploading: false,         // 是否开启上传
             file: '',
@@ -106,31 +109,75 @@ export default {
          */
         selectProtocol(type) {
             this.protocolCur = type
+            this.chunkDoneTotal = this.chunkTotal = 0;
+            if (!this.socket) this.initSocket();
         },
-        // 点击上传
+        /**
+         * 初始化socket.io
+         */
+        initSocket() {
+            this.socket = io(baseURL, {
+                path: '/socket.io',
+                query: { room: 'upload', fileId: `client_${Math.random()}` },
+                transports: ["websocket"],
+            });
+
+            this.socket.on('connect', () => { console.log('socket:', '链接成功') });
+            this.socket.on('disconnect', () => { console.log('socket:', '连接断开') });
+
+            // 接收上传成功信号
+            this.socket.on('uploaded', () => {
+                this.chunkDoneTotal += 1;
+                if (this.chunkDoneTotal === this.chunkTotal) {
+                    // 发送合并请求
+                    this.socket.emit('merge', {
+                        chunkSize: this.chunkSize,
+                        name: this.fileInfo.name,
+                        hash: this.fileInfo.hash,
+                        total: this.chunkDoneTotal
+                    });
+                }
+            });
+
+            // 接收合并成功
+            this.socket.on('done', () => {
+                this.updateTips('合并完成, 文件已上传成功', 'success');
+            });
+        },
+        /**
+         * 点击上传
+         */
         choiceFile() {
             this.$refs.fileEl.click();
         },
-        // 拖拽上传
+        /**
+         * 拖拽上传
+         */
         dragFile(e) {
             const droppedFiles = e.dataTransfer.files;
             if (!droppedFiles) return;
             this.file = droppedFiles[0];
             this.getFile();
         },
-        // 手动选择文件
+        /**
+         * 手动选择文件
+         */
         addFile() {
             this.file = this.$refs.fileEl.files[0];
             this.getFile();
         },
-        // 上传文件上传
+        /**
+         * 移除上传文件
+         */
         closeFile() {
             this.showFileInfo = false;
             this.file = null;
             this.$refs.fileEl.value = ''
             this.chunkTotal = this.chunkDoneTotal = 0;
         },
-        // 通过文件大小进行分片, 并计算生成哈希值
+        /**
+         * 通过文件大小进行分片, 并计算生成哈希值
+         */
         async getFile() {
             if (!this.file) {
                 this.updateTips("获取文件失败", "error");
@@ -145,7 +192,9 @@ export default {
                 console.log(e);
             }
         },
-        // 获取文件基本信息并显示
+        /**
+         * 获取文件基本信息并显示
+         */
         getFileInfo({ name, size }) {
             this.showFileInfo = true;
             this.fileInfo.name = name;
@@ -174,7 +223,9 @@ export default {
                 this.fileInfo.unit = 'B';
             }
         },
-        // 生成分割后hash切片File
+        /**
+         * 生成分割后hash切片File
+         */
         createFileHash(file) {
             const fileSize = file.size;
 
@@ -237,7 +288,9 @@ export default {
                 console.log(err);
             });
         },
-        // 提交上传
+        /**
+         * 提交上传
+         */
         async submit() {
             if (!this.isUploading) {
                 this.updateTips('正在读取文件计算哈希中，请耐心等待', 'warning');
@@ -262,12 +315,13 @@ export default {
                 if (this.protocolCur === 'http') {
                     this.sendFormDataByHttp(this.chunkSize, this.chunkTotal, this.fileInfo, this.file, result);
                 } else {
-                    console.log('使用socket上传')
-                    this.updateTips('socket协议正在逐步完善中', 'warning');
+                    this.sendBlobDataByWebSocket(this.chunkSize, this.chunkTotal, this.fileInfo, this.file, result);
                 }
             }
         },
-        // 检查分片是否已经上传过
+        /**
+         * 检查分片是否已经上传过
+         */
         async checkFileHash() {
             return new Promise((resolve, reject) => {
                 const data = {
@@ -288,7 +342,9 @@ export default {
                     })
             })
         },
-        // 通过FormData发送请求
+        /**
+         * 通过FormData发送请求
+         */
         async sendFormDataByHttp(chunkSize, chunkTotal, fileInfo, file, res) {
             let chunkReqArr = [];
 
@@ -358,14 +414,50 @@ export default {
                 this.sendChunksMegre(data);
             }
         },
-        // 通过长链接发送请求
-        sendBlobDataByWebSocket() {},
-        // 合并切片请求
+        /**
+         * 通过长链接发送请求
+         */
+        async sendBlobDataByWebSocket(chunkSize, chunkTotal, fileInfo, file, res) {
+            let blobData = [];
+
+            for (let i = 0; i < chunkTotal; i++) {
+                if (res.type === 0 || 
+                    (res.type === 1 && 
+                        res.index.length > 0 && 
+                        !res.index.includes(i.toString())
+                    )
+                ) {
+                    // 记录起始位置与结束位置
+                    const start = i * chunkSize;
+                    const end = Math.min(file.size, start + this.chunkSize);
+                    const form = Object.create({});
+
+                    // 组装数据源
+                    form.file = BlobFileSlice.call(file, start, end);
+                    form.size = file.size; // 一定要使用源File.size
+                    form.name = file.name;
+                    form.hash = file.hash;
+                    form.index = i;
+                    form.chunkSize = chunkSize;
+                    form.total = chunkTotal;
+
+                    blobData.push(form);
+                }
+            }
+
+            // 遍历发送socket.io请求
+            for (let i = 0, len = blobData.length; i < len; i++) {
+                await this.socket.emit("upload", blobData[i]);
+            }
+        },
+        /**
+         * 合并切片请求
+         */
         async sendChunksMegre(fileData) {
             try {
                 const { data } = await axios.post('/chunks/merge', fileData);
                 if (data.code) {
-                    this.updateTips('文件分片上传合并成功', 'success');
+                    this.updateTips('合并完成, 文件已上传成功', 'success');
                     this.chunkDoneTotal = this.chunkTotal;
                     this.isUploading = false;
                 }
@@ -373,7 +465,9 @@ export default {
                 this.updateTips(JSON.stringify(error.data.msg), 'error');
             }
         },
-        // 更新提示信息
+        /**
+         * 更新提示信息
+         */
         updateTips(tips, status) {
             this.tips = tips
             this.tipStatus = status;

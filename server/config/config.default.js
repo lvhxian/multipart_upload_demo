@@ -20,13 +20,24 @@ module.exports = appInfo => {
 
   config.security = {
     csrf: {
-      enable: false
+      enable: false,
     },
-    domainWhiteList: ['*']
+    domainWhiteList: [ '*' ],
   };
+
   config.cors = {
     origin: '*',
-    allowMethods: 'GET,HEAD,PUT,POST,DELETE,PATCH,OPTIONS'
+    allowMethods: 'GET,HEAD,PUT,POST,DELETE,PATCH,OPTIONS',
+  };
+
+  config.io = {
+    init: { },
+    namespace: {
+      '/': {
+        connectionMiddleware: [],
+        packetMiddleware: [],
+      },
+    },
   };
 
   config.cluster = {
