@@ -109,7 +109,7 @@ class HttpController extends Controlller {
     if (chunks.length !== total || chunks.length === 0) {
       ctx.status = 200;
       ctx.body = {
-        success: false,
+        code: 0,
         msg: '切片文件数量与请求不符合，无法合并',
         data: '',
       };

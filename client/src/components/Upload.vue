@@ -78,7 +78,7 @@ axios.defaults.baseURL = baseURL;
 export default {
     data() {
         return {
-            socket: null,
+            socket: "",
             protocolCur: 'socket',        // 上传协议
             showFileInfo: false,        // 是否显示上传文件信息
             isUploading: false,         // 是否开启上传
@@ -140,8 +140,12 @@ export default {
             });
 
             // 接收合并成功
-            this.socket.on('done', () => {
-                this.updateTips('合并完成, 文件已上传成功', 'success');
+            this.socket.on('done', (res) => {
+                if (res.code === 1) {
+                    this.updateTips('合并完成, 文件已上传成功', 'success');
+                } else {
+                    this.updateTips(res.msg, 'error');
+                }
             });
         },
         /**
@@ -419,7 +423,7 @@ export default {
          */
         async sendBlobDataByWebSocket(chunkSize, chunkTotal, fileInfo, file, res) {
             let blobData = [];
-
+    
             for (let i = 0; i < chunkTotal; i++) {
                 if (res.type === 0 || 
                     (res.type === 1 && 
@@ -435,8 +439,8 @@ export default {
                     // 组装数据源
                     form.file = BlobFileSlice.call(file, start, end);
                     form.size = file.size; // 一定要使用源File.size
-                    form.name = file.name;
-                    form.hash = file.hash;
+                    form.name = fileInfo.name;
+                    form.hash = fileInfo.hash;
                     form.index = i;
                     form.chunkSize = chunkSize;
                     form.total = chunkTotal;

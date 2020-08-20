@@ -1,15 +1,13 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const uploadPath = path.join(__dirname, '../../../uploads');
-const {
-  streamMerge,
-} = require('split-chunk-merge');
+const { streamMerge } = require('split-chunk-merge');
 const {
   mkdirsSync,
   bufferToStream,
 } = require('../../utils');
 
+const uploadPath = path.join(__dirname, '../../../uploads');
 const Controller = require('egg').Controller;
 
 
@@ -46,49 +44,43 @@ class IoController extends Controller {
    * 合并分片
    */
   async merge() {
-    const {
-      ctx,
-      app,
-    } = this;
+    const { ctx, app } = this;
     const nsp = app.io.of('/');
     const message = ctx.args[0] || {};
 
-    const {
-      chunkSize,
-      name,
-      total,
-      hash,
-    } = message;
-    // 根据hash值，获取分片文件。
-    // 创建存储文件
-    // 合并
-    const chunksPath = path.join(uploadPath, hash + '-' + chunkSize, '/');
+    const { chunkSize, name, total, hash } = message;
+    const chunkPath = path.join(uploadPath, `${hash}-${chunkSize}`, '/');
     const filePath = path.join(uploadPath, name);
-    // 读取所有的chunks 文件名存放在数组中
-    const chunks = fs.readdirSync(chunksPath);
+
+
+    const chunks = fs.readdirSync(chunkPath);
     const chunksPathList = [];
-    if (chunks.length !== total || chunks.length === 0) {
+
+    // 检查合并的文件是否符合分割总数
+    if (chunks.length === 0 || chunks.length !== total) {
       nsp.emit('done', {
-        success: false,
+        code: 0,
         msg: '切片文件数量与请求不符合，无法合并',
       });
     }
+
     chunks.forEach(item => {
-      chunksPathList.push(path.join(chunksPath, item));
+      chunksPathList.push(path.join(chunkPath, item));
     });
 
-    // const writeStream = fs.createWriteStream(filePath);
-    streamMerge(chunksPathList, filePath, chunkSize).then(() => {
+    // 执行合并操作
+    try {
+      await streamMerge(chunksPathList, filePath, chunkSize);
       nsp.emit('done', {
-        success: false,
-        msg: '切片文件数量与请求不符合，无法合并',
+        code: 1,
+        msg: '合并成功',
       });
-    }).catch(() => {
+    } catch (e) {
       nsp.emit('done', {
-        success: false,
-        msg: '合并失败，请重试',
+        code: 0,
+        msg: '合并失败',
       });
-    });
+    }
   }
 }
 
